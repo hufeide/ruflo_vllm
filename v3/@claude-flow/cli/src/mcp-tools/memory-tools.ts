@@ -97,6 +97,34 @@ function sanitizeMemoryKey(key: string): string {
   return safe.length > MAX_KEY_LENGTH ? safe.slice(0, MAX_KEY_LENGTH) : safe;
 }
 
+// #1937 — minimal glob → RegExp helper for memory_import_claude exclusion
+// patterns. Anchored. Supports the three operators the issue's voice-fidelity
+// workflow needs:
+//   `**` — any chars including path separators
+//   `*`  — any chars except path separators
+//   `?`  — exactly one char except a path separator
+// Everything else is regex-escaped. Used to match absolute file paths.
+function globToRegex(pattern: string): RegExp {
+  // Tokenize so we can replace `**` before `*` without overlap.
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === '*' && pattern[i + 1] === '*') {
+      out += '.*';
+      i++;
+    } else if (c === '*') {
+      out += '[^/\\\\]*';
+    } else if (c === '?') {
+      out += '[^/\\\\]';
+    } else if (/[.+^$|(){}\[\]\\]/.test(c)) {
+      out += '\\' + c;
+    } else {
+      out += c;
+    }
+  }
+  return new RegExp('^' + out + '$');
+}
+
 // #1883 — resolve the Claude-Code project memory directory for the *current*
 // project. Claude Code hashes the project path differently per host OS, and
 // our previous logic only POSIX-slash-replaced cwd, which breaks for:
@@ -754,7 +782,7 @@ export const memoryTools: MCPTool[] = [
 
   {
     name: 'memory_import_claude',
-    description: 'Import Claude Code auto-memory files into AgentDB with ONNX vector embeddings. Reads ~/.claude/projects/*/memory/*.md files, parses YAML frontmatter, splits into sections, and stores with 384-dim embeddings for semantic search. Use allProjects=true to import from ALL Claude projects. Pass projectPath to override cwd-based detection (#1883 — required when Ruflo runs in WSL but Claude Code is on Windows). Use when native Read/Write is wrong because you need (a) cross-session retrieval by semantic similarity (vector embeddings) not by file path, (b) namespacing across projects without managing directory layout, or (c) the .swarm/memory.db audit trail. For one-shot file I/O, native Read/Write is fine.',
+    description: 'Import Claude Code auto-memory files into AgentDB with ONNX vector embeddings. Reads ~/.claude/projects/*/memory/*.md files, parses YAML frontmatter, splits into sections, and stores with 384-dim embeddings for semantic search. Use allProjects=true to import from ALL Claude projects. Pass projectPath to override cwd-based detection (#1883 — required when Ruflo runs in WSL but Claude Code is on Windows). Pass excludeFilePatterns (glob list) or excludeFiles (absolute path list) to skip voice-load-bearing, PII, or persona-restricted files (#1937). Use when native Read/Write is wrong because you need (a) cross-session retrieval by semantic similarity (vector embeddings) not by file path, (b) namespacing across projects without managing directory layout, or (c) the .swarm/memory.db audit trail. For one-shot file I/O, native Read/Write is fine.',
     category: 'memory',
     inputSchema: {
       type: 'object',
@@ -762,6 +790,16 @@ export const memoryTools: MCPTool[] = [
         allProjects: { type: 'boolean', description: 'Import from all Claude projects (default: current project only)' },
         namespace: { type: 'string', description: 'Target namespace (default: "claude-memories")' },
         projectPath: { type: 'string', description: '#1883 — explicit project path to hash, used when cwd does not match Claude Code\'s view (e.g. WSL bridge to Windows host). Pass the canonical project root as Claude Code sees it.' },
+        excludeFilePatterns: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '#1937 — glob patterns matched against the absolute file path. Files matching ANY pattern are skipped. Supports `*` (any chars within a path segment), `**` (any chars including separators), and `?` (single char). Examples: `**/voice-*.md`, `**/persona-*.md`. Combine with excludeFiles for explicit paths.',
+        },
+        excludeFiles: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '#1937 — absolute file paths to skip verbatim. Faster than a pattern when the list is known ahead of time (operator captured baselines). Combine with excludeFilePatterns.',
+        },
       },
     },
     handler: async (input) => {
@@ -774,8 +812,19 @@ export const memoryTools: MCPTool[] = [
       const projectPathOverride = input.projectPath as string | undefined;
       const claudeProjectsDir = join(homedir(), '.claude', 'projects');
 
+      // #1937 — voice-fidelity / persona-restricted exclusion.
+      const excludeFilePatterns = Array.isArray(input.excludeFilePatterns) ? input.excludeFilePatterns as string[] : [];
+      const excludeFilesList = Array.isArray(input.excludeFiles) ? new Set(input.excludeFiles as string[]) : new Set<string>();
+      const excludeRegexes = excludeFilePatterns.map(globToRegex);
+      const isExcluded = (absPath: string): boolean => {
+        if (excludeFilesList.has(absPath)) return true;
+        return excludeRegexes.some(re => re.test(absPath));
+      };
+
       // Find memory files
       const memoryFiles: Array<{ path: string; project: string; file: string }> = [];
+
+      let excludedByPattern = 0;
 
       if (allProjects) {
         // Scan all projects
@@ -786,7 +835,9 @@ export const memoryTools: MCPTool[] = [
               const memDir = join(claudeProjectsDir, project.name, 'memory');
               if (!existsSync(memDir)) continue;
               for (const file of readdirSync(memDir).filter((f: string) => f.endsWith('.md'))) {
-                memoryFiles.push({ path: join(memDir, file), project: project.name, file });
+                const absPath = join(memDir, file);
+                if (isExcluded(absPath)) { excludedByPattern++; continue; }
+                memoryFiles.push({ path: absPath, project: project.name, file });
               }
             }
           } catch { /* scan error */ }
@@ -798,7 +849,9 @@ export const memoryTools: MCPTool[] = [
         if (resolved) {
           try {
             for (const file of readdirSync(resolved.memDir).filter((f: string) => f.endsWith('.md'))) {
-              memoryFiles.push({ path: join(resolved.memDir, file), project: resolved.projectHash, file });
+              const absPath = join(resolved.memDir, file);
+              if (isExcluded(absPath)) { excludedByPattern++; continue; }
+              memoryFiles.push({ path: absPath, project: resolved.projectHash, file });
             }
           } catch { /* scan error */ }
         }
@@ -878,6 +931,7 @@ export const memoryTools: MCPTool[] = [
         imported,
         skipped,
         duplicatesSkipped,
+        excludedByPattern,
         files: memoryFiles.length,
         projects: projects.size,
         namespace: ns,
