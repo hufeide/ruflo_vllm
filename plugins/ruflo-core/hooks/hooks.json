@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/ruflo-hook.sh\" modify-bash || true"
+            "command": "/bin/bash -c '\"${CLAUDE_PLUGIN_ROOT}/scripts/ruflo-hook.sh\" modify-bash || true'"
           }
         ]
       },
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/ruflo-hook.sh\" modify-file || true"
+            "command": "/bin/bash -c '\"${CLAUDE_PLUGIN_ROOT}/scripts/ruflo-hook.sh\" modify-file || true'"
           }
         ]
       }
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/ruflo-hook.sh\" session-end --generate-summary true --persist-state true --export-metrics true || true"
+            "command": "/bin/bash -c '\"${CLAUDE_PLUGIN_ROOT}/scripts/ruflo-hook.sh\" session-end --generate-summary true --persist-state true --export-metrics true || true'"
           }
         ]
       }

@@ -1851,6 +1851,48 @@ jobs:
         shell: bash
         run: node scripts/audit-vector-dim.mjs
 
+  tool-output-guardrail-smoke:
+    # Smoke test for ADR-131 / ruvnet/ruflo#2149 — ToolOutputGuardrail
+    # detects the four canonical OWASP ASI01 (Agent Goal Hijacking) attack
+    # shapes (instruction override, ChatML/Llama frame injection, exfiltration)
+    # and enforces the documented default policy (critical→reject,
+    # high→redact, medium→flag, low/none→allow).
+    #
+    # The exhaustive behavioural surface is the package's vitest suite; this
+    # smoke runs against the *built* dist/index.js to catch missing exports
+    # or accidental relaxation of the default policy.
+    name: ToolOutputGuardrail smoke (ADR-131, #2149)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: v3/pnpm-lock.yaml
+
+      - name: Build @claude-flow/security
+        working-directory: v3
+        shell: bash
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @claude-flow/security run build
+          test -f @claude-flow/security/dist/index.js \
+            || (echo "::error::@claude-flow/security/dist/index.js missing after build"; exit 1)
+
+      - name: Run guardrail smoke
+        shell: bash
+        run: node scripts/smoke-tool-output-guardrail.mjs
+
   witness-verify:
     # Cryptographic regression guard: runs `ruflo verify --manifest` against
     # the local build to confirm every documented fix in verification.md.json
