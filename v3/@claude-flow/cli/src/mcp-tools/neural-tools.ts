@@ -141,6 +141,32 @@ function saveNeuralStore(store: NeuralStore): void {
 }
 
 /**
+ * Public helper: read-only stats about the neural store, for the unified
+ * learning-stats aggregator. Returns total pattern count + per-type breakdown
+ * without exposing the embeddings.
+ */
+export function getNeuralStoreStats(): {
+  patternCount: number;
+  byType: Record<string, number>;
+  modelCount: number;
+  source: string;
+} {
+  const store = loadNeuralStore();
+  const patterns = Object.values(store.patterns ?? {});
+  const byType: Record<string, number> = {};
+  for (const p of patterns) {
+    const t = (p as { type?: string }).type || 'unknown';
+    byType[t] = (byType[t] ?? 0) + 1;
+  }
+  return {
+    patternCount: patterns.length,
+    byType,
+    modelCount: Object.values(store.models ?? {}).length,
+    source: '.claude-flow/neural/patterns.json (loadNeuralStore)',
+  };
+}
+
+/**
  * Public helper: store an array of patterns into the neural store so they
  * surface via `neural_patterns list`. Used by hooks_pretrain so its extracted
  * patterns are actually queryable, not just bundled in the `pretrain` namespace.

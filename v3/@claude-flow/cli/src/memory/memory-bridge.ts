@@ -2471,3 +2471,46 @@ function cosineSim(a: number[], b: number[]): number {
   const mag = Math.sqrt(normA * normB);
   return mag === 0 ? 0 : dot / mag;
 }
+
+/**
+ * Public helper for the unified learning-stats aggregator: counts of entries
+ * per namespace + the top-level total. Best-effort — if the bridge isn't
+ * available it returns zeros so the aggregator can still report the other
+ * stores honestly. (#2245 follow-up.)
+ */
+export async function getMemoryBridgeStats(options: {
+  namespaces?: string[];
+  dbPath?: string;
+} = {}): Promise<{
+  totalEntries: number;
+  perNamespace: Record<string, number>;
+  source: string;
+  reachable: boolean;
+}> {
+  const namespaces = options.namespaces ?? [
+    'default', 'patterns', 'claude-memories', 'auto-memory',
+    'tasks', 'feedback', 'pretrain', 'trajectories',
+  ];
+  try {
+    const all = await bridgeListEntries({ dbPath: options.dbPath, limit: 1 });
+    if (!all) {
+      return { totalEntries: 0, perNamespace: {}, source: 'memory-bridge (unreachable)', reachable: false };
+    }
+    const perNamespace: Record<string, number> = {};
+    for (const ns of namespaces) {
+      try {
+        const r = await bridgeListEntries({ namespace: ns, dbPath: options.dbPath, limit: 1 });
+        const n = r?.total ?? 0;
+        if (n > 0) perNamespace[ns] = n;
+      } catch { /* skip per-namespace failure */ }
+    }
+    return {
+      totalEntries: all.total,
+      perNamespace,
+      source: 'memory-bridge AgentDB (bridgeListEntries)',
+      reachable: true,
+    };
+  } catch {
+    return { totalEntries: 0, perNamespace: {}, source: 'memory-bridge (error)', reachable: false };
+  }
+}

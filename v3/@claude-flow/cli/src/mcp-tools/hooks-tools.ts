@@ -4450,8 +4450,31 @@ export const hooksTaskCompleted: MCPTool = {
   },
 };
 
+/**
+ * Unified learning-stats aggregator MCP tool (#2245 → ADR-075).
+ *
+ * One honest call across the four historical stat sources — every sub-view
+ * names its store and a `consistency` block flags relationships that drift.
+ */
+export const hooksIntelligenceUnifiedStats: MCPTool = {
+  name: 'hooks_intelligence_unified-stats',
+  description: 'One honest view across the four learning stat sources: globalStats (`.claude-flow/neural/stats.json`), the in-memory SONA coordinator, memory-bridge AgentDB entries, and the neural-patterns store. Each sub-view names its source path. The `consistency` block notes cross-store drift (e.g. globalStats reports N patterns but neural_patterns is empty). Use this when one dashboard call should show "did learning happen" coherently — vs the four original aggregators which each return only their narrow slice. See ADR-075.',
+  category: 'hooks',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      verbose: { type: 'boolean', description: 'Include extended breakdowns', default: true },
+    },
+  },
+  handler: async (_input: Record<string, unknown>) => {
+    const intel = await import('../memory/intelligence.js');
+    return intel.getUnifiedLearningStats();
+  },
+};
+
 // Export all hooks tools
 export const hooksTools: MCPTool[] = [
+  hooksIntelligenceUnifiedStats,
   hooksTeammateIdle,
   hooksTaskCompleted,
   hooksPreEdit,

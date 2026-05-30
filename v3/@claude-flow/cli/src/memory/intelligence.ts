@@ -830,6 +830,130 @@ export function flushIntelligenceStats(): void {
 }
 
 // ============================================================================
+// Unified learning-stats aggregator (#2245 follow-up to ADR-074)
+// ============================================================================
+
+/**
+ * The four historical stat sources (globalStats / memory_bridge_status /
+ * hooks metrics / neural_patterns count) genuinely measure different things,
+ * so we don't merge them — we expose ONE call that returns all four sub-views
+ * with the *source path* of each, plus a `consistency` block that spot-checks
+ * the relationships the system maintains.
+ *
+ * No new store; no migration; just one honest view across the four.
+ */
+export interface UnifiedLearningStats {
+  global: {
+    patternsLearned: number;
+    trajectoriesRecorded: number;
+    signalsProcessed: number;
+    lastAdaptation: number | null;
+    source: string;
+  };
+  sona: {
+    trajectoriesTotal: number;
+    patternsLearned: number;
+    reasoningBankSize: number;
+    avgAdaptationTimeMs: number;
+    source: string;
+    available: boolean;
+  };
+  memoryBridge: {
+    totalEntries: number;
+    perNamespace: Record<string, number>;
+    source: string;
+    reachable: boolean;
+  };
+  neuralPatterns: {
+    patternCount: number;
+    byType: Record<string, number>;
+    modelCount: number;
+    source: string;
+  };
+  consistency: {
+    sonaTracksGlobal: boolean;
+    sonaTracksGlobalDelta: number;
+    notes: string[];
+  };
+  generatedAt: string;
+}
+
+export async function getUnifiedLearningStats(): Promise<UnifiedLearningStats> {
+  const intel = getIntelligenceStats();
+  const sonaCoord = sonaCoordinator;
+  const bank = reasoningBank;
+
+  // SONA in-memory view
+  const sonaAvailable = !!sonaCoord;
+  let sonaStats = { trajectoriesTotal: 0, patternsLearned: 0, reasoningBankSize: 0, avgAdaptationTimeMs: 0 };
+  if (sonaCoord) {
+    try {
+      const s = (sonaCoord as unknown as { stats?: () => Record<string, number> }).stats?.() ?? {};
+      sonaStats = {
+        trajectoriesTotal: Number(s.trajectoriesTotal ?? s.trajectoriesProcessed ?? 0),
+        patternsLearned: Number(s.totalPatterns ?? s.patternsLearned ?? 0),
+        reasoningBankSize: (bank as unknown as { stats?: () => { patternCount?: number } })?.stats?.()?.patternCount ?? 0,
+        avgAdaptationTimeMs: (sonaCoord as unknown as { getAvgAdaptationTime?: () => number }).getAvgAdaptationTime?.() ?? 0,
+      };
+    } catch { /* SONA not yet initialised */ }
+  }
+
+  // memory-bridge
+  let bridgeStats: UnifiedLearningStats['memoryBridge'] = {
+    totalEntries: 0, perNamespace: {}, source: 'memory-bridge (skipped)', reachable: false,
+  };
+  try {
+    const mb = await import('./memory-bridge.js');
+    bridgeStats = await mb.getMemoryBridgeStats();
+  } catch { /* bridge module not loadable */ }
+
+  // neural store
+  let neuralStats: UnifiedLearningStats['neuralPatterns'] = {
+    patternCount: 0, byType: {}, modelCount: 0, source: 'neural store (skipped)',
+  };
+  try {
+    const nt = await import('../mcp-tools/neural-tools.js');
+    neuralStats = nt.getNeuralStoreStats();
+  } catch { /* neural module not loadable */ }
+
+  // Consistency notes — describe (don't enforce) the cross-store relationships
+  const sonaTracksGlobalDelta = sonaStats.trajectoriesTotal - intel.trajectoriesRecorded;
+  const notes: string[] = [];
+  if (sonaAvailable && Math.abs(sonaTracksGlobalDelta) > 2) {
+    notes.push(`sona.trajectoriesTotal (${sonaStats.trajectoriesTotal}) drifts from globalStats.trajectoriesRecorded (${intel.trajectoriesRecorded}) by ${sonaTracksGlobalDelta} — expected to track within ±1`);
+  }
+  if (intel.patternsLearned > 0 && neuralStats.patternCount === 0) {
+    notes.push(`globalStats reports ${intel.patternsLearned} patterns learned but neural_patterns store is empty — pretrain has not written here, or trajectory-end isn't promoting patterns to the neural store yet`);
+  }
+  if (!bridgeStats.reachable) {
+    notes.push('memory-bridge unreachable — bridge-dependent counters (post-edit/-command persistence, pretrain bundle) will show 0');
+  }
+
+  return {
+    global: {
+      patternsLearned: intel.patternsLearned,
+      trajectoriesRecorded: intel.trajectoriesRecorded,
+      signalsProcessed: intel.signalsProcessed,
+      lastAdaptation: intel.lastAdaptation,
+      source: '.claude-flow/neural/stats.json (globalStats)',
+    },
+    sona: {
+      ...sonaStats,
+      source: 'sonaCoordinator (in-memory, resets per process)',
+      available: sonaAvailable,
+    },
+    memoryBridge: bridgeStats,
+    neuralPatterns: neuralStats,
+    consistency: {
+      sonaTracksGlobal: sonaAvailable ? Math.abs(sonaTracksGlobalDelta) <= 1 : true,
+      sonaTracksGlobalDelta,
+      notes,
+    },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 

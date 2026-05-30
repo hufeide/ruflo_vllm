@@ -126,6 +126,14 @@ async function main() {
   const dtE = performance.now() - tE;
 
   // -------------------------------------------------------------------------
+  // §F — getUnifiedLearningStats (ADR-075)
+  // -------------------------------------------------------------------------
+  const tF = performance.now();
+  const unified = await intel.getUnifiedLearningStats();
+  const dtF = performance.now() - tF;
+  const unifiedOk = unified.global && unified.sona && unified.memoryBridge && unified.neuralPatterns && unified.consistency;
+
+  // -------------------------------------------------------------------------
   // Summary
   // -------------------------------------------------------------------------
   const summary = {
@@ -170,6 +178,22 @@ async function main() {
         note: 'MCP trajectory tools feed sonaCoordinator (see hooks_intelligence_stats), not globalStats — observable outcomes checked here',
         elapsedMs: Number(dtE.toFixed(2)),
       },
+      F_unifiedStats: {
+        shape: ['global', 'sona', 'memoryBridge', 'neuralPatterns', 'consistency'],
+        observed: {
+          'global.patternsLearned': unified.global.patternsLearned,
+          'global.trajectoriesRecorded': unified.global.trajectoriesRecorded,
+          'global.signalsProcessed': unified.global.signalsProcessed,
+          'memoryBridge.totalEntries': unified.memoryBridge.totalEntries,
+          'memoryBridge.reachable': unified.memoryBridge.reachable,
+          'neuralPatterns.patternCount': unified.neuralPatterns.patternCount,
+          'sona.available': unified.sona.available,
+          'consistency.notes': unified.consistency.notes.length,
+        },
+        passed: !!unifiedOk,
+        note: 'ADR-075 — one aggregator across the 4 stores. Each sub-view names its source.',
+        elapsedMs: Number(dtF.toFixed(2)),
+      },
     },
     finalState: {
       signalsProcessed: A_after.signalsProcessed,
@@ -194,6 +218,8 @@ async function main() {
     console.log(`| C task-completed (record-only) | ${N} | trajectories+${summary.sections.C_taskCompleted_recordedOnly.trajectoriesDelta} (expected 0) | ${summary.sections.C_taskCompleted_recordedOnly.passed ? '✅' : '❌'} | ${summary.sections.C_taskCompleted_recordedOnly.elapsedMs} |`);
     console.log(`| D pretrain → neural_patterns | ${items.length} | stored=${summary.sections.D_pretrain_neuralPatterns.stored}, listed=${summary.sections.D_pretrain_neuralPatterns.listTotal} | ${summary.sections.D_pretrain_neuralPatterns.passed ? '✅' : '❌'} | ${summary.sections.D_pretrain_neuralPatterns.elapsedMs} |`);
     console.log(`| E multi-step trajectory | ${summary.sections.E_multiStepTrajectory.cycles} | persisted=${summary.sections.E_multiStepTrajectory.persistedCount}, sonaUpdate=${summary.sections.E_multiStepTrajectory.sonaUpdateCount} | ${summary.sections.E_multiStepTrajectory.passed ? '✅' : '❌'} | ${summary.sections.E_multiStepTrajectory.elapsedMs} |`);
+    const f = summary.sections.F_unifiedStats;
+    console.log(`| F unified-stats | 4 stores | bridge.reachable=${f.observed['memoryBridge.reachable']}, sona.available=${f.observed['sona.available']}, neural.count=${f.observed['neuralPatterns.patternCount']}, notes=${f.observed['consistency.notes']} | ${f.passed ? '✅' : '❌'} | ${f.elapsedMs} |`);
     console.log('');
     console.log(`Final state: signalsProcessed=${summary.finalState.signalsProcessed}, trajectoriesRecorded=${summary.finalState.trajectoriesRecorded}, patternsLearned=${summary.finalState.patternsLearned}`);
     console.log(`Overall: ${allPassed ? '✅ ALL PASSED' : '❌ FAILED'}`);
