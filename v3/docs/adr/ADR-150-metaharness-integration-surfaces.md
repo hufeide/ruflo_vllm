@@ -119,7 +119,7 @@ Rejected. Touching the MCP dispatch core affects all 314 tools and is too high-b
 ## References
 
 - [Research dossier (gist)](https://gist.github.com/ruvnet/19d166ff9acf368c9da4172d91ac9113) — full graded-evidence sourcing.
-- [Tracking issue](https://github.com/ruvnet/ruflo/issues) — link inserted once opened; phase checklist.
+- [Tracking issue #2399](https://github.com/ruvnet/ruflo/issues/2399) — phase checklist.
 - ADR-148 — Cost-optimal router lifecycle via `@metaharness/router`.
 - ADR-149 — Per-model cost-optimal routing (Pareto framing).
 - ADR-097 — Federation budget circuit breaker (cost-spend telemetry pattern reused by metaharness plugin).
