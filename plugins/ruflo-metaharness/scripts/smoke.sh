@@ -170,6 +170,27 @@ if (!od.metaharness) { console.error('missing metaharness in optionalDependencie
 if (j.dependencies && j.dependencies.metaharness) { console.error('metaharness leaked into dependencies'); process.exit(1); }
 " 2>/dev/null && ok || bad "ruflo wrapper missing metaharness optionalDep"
 
+step "17q. test-with-openrouter — GCP-secret × scaffold × lifecycle e2e (iter 26)"
+F="$ROOT/scripts/test-with-openrouter.mjs"
+miss=""
+[[ -x "$F" ]] || miss="$miss not-executable"
+node --check "$F" 2>/dev/null || miss="$miss syntax-error"
+# Pulls the secret from GCP Secret Manager (not from env file)
+grep -q "gcloud secrets versions access" "$F" || miss="$miss no-gcp-fetch"
+grep -q "OPENROUTER_API_KEY" "$F" || miss="$miss no-secret-name"
+# Verifies the key against OpenRouter (live HTTP)
+grep -q "openrouter.ai/api/v1" "$F" || miss="$miss no-openrouter-http"
+# Scaffold + lifecycle commands
+grep -q "metaharness@latest.*new\|metaharness new\|'test-harness'" "$F" || miss="$miss no-scaffold-call"
+grep -q "harness.*doctor\|harness', 'doctor\|\\['doctor'" "$F" || miss="$miss no-doctor-call"
+grep -q "harness.*score\|'score'" "$F" || miss="$miss no-score-call"
+# Anti-regression: scaffold MUST cd into a temp dir (--target is ignored
+# by metaharness@0.1.11+ which writes to \$CWD/<name>; iter 26 fix)
+grep -q "cwd: fixture\|cwd: opts.cwd" "$F" || miss="$miss no-cwd-fix"
+# Never echo the raw key
+grep -q "apiKey.slice(0, 7)" "$F" || miss="$miss key-may-leak"
+[[ -z "$miss" ]] && ok || bad "$miss"
+
 step "17p. bench-recordpair-overhead — measures + gates iter-12 default-path cost (iter 24/25)"
 F="$ROOT/scripts/bench-recordpair-overhead.mjs"
 miss=""
