@@ -170,6 +170,44 @@ if (!od.metaharness) { console.error('missing metaharness in optionalDependencie
 if (j.dependencies && j.dependencies.metaharness) { console.error('metaharness leaked into dependencies'); process.exit(1); }
 " 2>/dev/null && ok || bad "ruflo wrapper missing metaharness optionalDep"
 
+step "17r. _harness.mjs npx-argv regression guard (iter 27 fix lock)"
+F="$ROOT/scripts/_harness.mjs"
+miss=""
+# THE BUG WAS: passing '-y metaharness@latest' as a single argv token
+# to spawnSync. Lock the array-form invocation so it can't regress.
+# A correct invocation looks like:
+#   spawnSync('npx', ['-y', 'metaharness@latest', ...], ...)
+# A broken one looks like:
+#   spawnSync('npx', ['-y metaharness@latest', ...], ...)
+# OR:
+#   execCli('-y metaharness@latest', args, opts)
+if grep -qE "execCli\(\s*['\"]-y metaharness@latest['\"]" "$F" 2>/dev/null; then
+  miss="$miss bug-regressed-string-form"
+fi
+# Confirm the fix is in place
+grep -q "execCli(\[\s*'-y'\s*,\s*'metaharness@latest'" "$F" 2>/dev/null || \
+  grep -q "execCli(\[ *'-y', 'metaharness@latest'" "$F" 2>/dev/null || miss="$miss no-array-form-fix"
+# cwd + env pass-through (added by iter 27)
+grep -q "cwd: opts" "$F" || miss="$miss no-cwd-passthrough"
+[[ -z "$miss" ]] && ok || bad "$miss"
+
+step "17s. mint.mjs cwd-based scaffolding (iter 27 fix for upstream --target bug)"
+F="$ROOT/scripts/mint.mjs"
+miss=""
+# The fix uses dirname(target) as cwd + basename(target) as the CLI name
+grep -q "const parentDir = dirname(ARGS.target)" "$F" || miss="$miss no-parent-dir"
+grep -q "const cliName = basename(ARGS.target)" "$F" || miss="$miss no-cli-name"
+# The CLI invocation MUST pass cliName (not ARGS.name) + use cwd: parentDir
+grep -q "'new', cliName" "$F" || miss="$miss no-cli-name-passed"
+grep -q "cwd: parentDir" "$F" || miss="$miss no-cwd-set"
+# And MUST NOT include the silently-ignored --target flag
+if grep -qE "'--target',\s*ARGS\.target" "$F" 2>/dev/null; then
+  miss="$miss --target-flag-leaked-back"
+fi
+# Cross-reference to the upstream issue
+grep -q "agent-harness-generator/issues/9\|0.1.12\|iter 27" "$F" || miss="$miss no-bug-context-anchor"
+[[ -z "$miss" ]] && ok || bad "$miss"
+
 step "17q. test-with-openrouter — GCP-secret × scaffold × lifecycle e2e (iter 26)"
 F="$ROOT/scripts/test-with-openrouter.mjs"
 miss=""
