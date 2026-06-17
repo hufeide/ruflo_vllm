@@ -1191,6 +1191,19 @@ export async function bridgeGenerateEmbedding(
     const isMock = (embedder as { isMock?: boolean; backend?: string }).isMock === true
       || (embedder as { backend?: string }).backend === 'mock';
 
+    // #2395 — AgentDB's vectorBackend controller may initialize as
+    // `enabled: false` (e.g., ruvector isn't wired into its neural substrate
+    // yet) and silently fall back to a 128-dim hash stub. The embedder doesn't
+    // expose isMock=true in that path, so the wrapper above was reporting
+    // backend='onnx' on what's actually 128-dim hash garbage. The model name
+    // we hardcode ('Xenova/all-MiniLM-L6-v2') always produces 384-dim, so a
+    // dimensions mismatch is a definitive stub signal: return null and let
+    // the caller fall through to generateLocalEmbedding which routes to
+    // transformers.js / ruvector ONNX directly.
+    if (emb.length !== 384) {
+      return null;
+    }
+
     return {
       embedding: Array.from(emb),
       dimensions: emb.length,
