@@ -191,6 +191,30 @@ grep -q "execCli(\[\s*'-y'\s*,\s*'metaharness@latest'" "$F" 2>/dev/null || \
 grep -q "cwd: opts" "$F" || miss="$miss no-cwd-passthrough"
 [[ -z "$miss" ]] && ok || bad "$miss"
 
+step "17z69. ADR-150 cross-references resolve to existing files (iter 106)"
+miss=""
+# ADR-150's body references ADR-151 and ADR-152 (the Phase-3 scope shell
+# and the genome-similarity ADR). If either gets renamed/moved, the
+# link in ADR-150 becomes a 404. Same drift class as iter-91's SKILL.md
+# refs, applied to the ADR layer.
+ADR_DIR="$ROOT/../../v3/docs/adr"
+ADR_150="$ADR_DIR/ADR-150-metaharness-integration-surfaces.md"
+# Extract every ADR-NNN reference (including 150 itself for completeness)
+REFS=$(grep -oE "ADR-15[0-9]" "$ADR_150" 2>/dev/null | sort -u)
+COUNT=0
+for ref in $REFS; do
+  COUNT=$((COUNT + 1))
+  # Find matching file in ADR dir
+  num=$(echo "$ref" | sed -E 's/ADR-//')
+  # The file naming convention is ADR-NNN-<slug>.md
+  if ! ls "$ADR_DIR"/ADR-${num}-*.md 2>/dev/null | head -1 | grep -q . ; then
+    miss="$miss ${ref}-not-found"
+  fi
+done
+# ADR-150 must reference at least its Phase-3 parents (151 + 152) plus self
+[[ "$COUNT" -ge 3 ]] || miss="$miss too-few-adr-refs:$COUNT"
+[[ -z "$miss" ]] && ok || bad "$miss"
+
 step "17z68. SKILL.md description + argument-hint frontmatter populated (iter 105)"
 miss=""
 # Companion to iter-104's allowed-tools gate.
