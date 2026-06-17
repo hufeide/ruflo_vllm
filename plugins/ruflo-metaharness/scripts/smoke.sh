@@ -191,6 +191,20 @@ grep -q "execCli(\[\s*'-y'\s*,\s*'metaharness@latest'" "$F" 2>/dev/null || \
 grep -q "cwd: opts" "$F" || miss="$miss no-cwd-passthrough"
 [[ -z "$miss" ]] && ok || bad "$miss"
 
+step "17z35. parseMcpScanText edge-case unit tests (iter 72)"
+miss=""
+F="$ROOT/scripts/test-similarity.mjs"
+grep -q "Phase 10 — iter-50 parseMcpScanText edge cases" "$F" 2>/dev/null || miss="$miss no-phase-10"
+grep -q "parseMcpScanText(null)" "$F" 2>/dev/null || miss="$miss no-null-test"
+grep -q "single \[INFO\] block" "$F" 2>/dev/null || miss="$miss no-single-info-test"
+grep -q "continuation lines appended" "$F" 2>/dev/null || miss="$miss no-continuation-test"
+grep -q "severities preserved in order" "$F" 2>/dev/null || miss="$miss no-multi-order-test"
+grep -q "no Result: line → summary === null" "$F" 2>/dev/null || miss="$miss no-no-result-test"
+grep -q "strict regex skips mixed-case" "$F" 2>/dev/null || miss="$miss no-mixed-case-test"
+# Runtime: extended test passes (now 90+ assertions)
+node "$F" >/dev/null 2>&1 || miss="$miss runtime-fails"
+[[ -z "$miss" ]] && ok || bad "$miss"
+
 step "17z34. drift_from_history MCP tool exposes baselineKey + baselineFile (iter 71)"
 miss=""
 WRAPPER="$ROOT/../../v3/@claude-flow/cli/src/mcp-tools/metaharness-tools.ts"

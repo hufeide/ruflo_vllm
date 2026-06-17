@@ -25,7 +25,7 @@ import {
   projectToVec, cosine, categoricalAgreement, jaccard, similarity,
 } from './_similarity.mjs';
 // iter 64 — also test the iter-63 shared severity primitives
-import { SEVERITY_RANK, rankSeverity } from './_harness.mjs';
+import { SEVERITY_RANK, rankSeverity, parseMcpScanText } from './_harness.mjs';
 
 const ARGS = (() => {
   const a = { format: 'table' };
@@ -240,6 +240,79 @@ assert(rollup([{ severity: 'low' }, { severity: 'warn' }, { severity: 'high' }, 
   'rollup picks max across mixed severities');
 assert(rollup([{ severity: 'unknown-strange-value' }]) === 'clean',
   'rollup with unknown severity stays clean (safe default)');
+
+console.log('\nPhase 10 — iter-50 parseMcpScanText edge cases');
+
+// Empty input — graceful return shape
+const empty = parseMcpScanText('');
+assert(Array.isArray(empty.findings) && empty.findings.length === 0,
+  'parseMcpScanText("") → findings:[]');
+assert(empty.summary === null, 'parseMcpScanText("") → summary:null');
+
+// null / undefined safe
+const nullParsed = parseMcpScanText(null);
+assert(Array.isArray(nullParsed.findings) && nullParsed.findings.length === 0,
+  'parseMcpScanText(null) → findings:[]');
+const undefParsed = parseMcpScanText(undefined);
+assert(Array.isArray(undefParsed.findings) && undefParsed.findings.length === 0,
+  'parseMcpScanText(undefined) → findings:[]');
+
+// Single finding — happy path
+const single = parseMcpScanText(`harness mcp-scan — /repo
+
+  [INFO] No MCP security issues found
+
+Result: INFO (1 finding, 0 high)
+`);
+assert(single.findings.length === 1, 'single [INFO] block → 1 finding');
+assert(single.findings[0].severity === 'info', 'severity lowercased');
+assert(single.findings[0].message === 'No MCP security issues found',
+  'message extracted');
+assert(single.summary?.overallSeverity === 'info',
+  'summary.overallSeverity from Result: line');
+assert(single.summary?.totalCount === 1,
+  'summary.totalCount === 1 from "(1 finding,"');
+
+// Continuation line — indented text appends to previous finding
+const cont = parseMcpScanText(`
+  [HIGH] Exposed credential path
+         Detected in .mcp/servers.json line 12
+         Recommended action: rotate immediately
+
+Result: HIGH (1 finding, 1 high)
+`);
+assert(cont.findings.length === 1, 'finding with continuation = 1 entry');
+assert(cont.findings[0].severity === 'high', 'HIGH lowercased to high');
+assert(cont.findings[0].message.includes('Detected in') &&
+       cont.findings[0].message.includes('rotate immediately'),
+  'continuation lines appended to message');
+
+// Multiple findings — distinct entries
+const multi = parseMcpScanText(`
+  [WARN] First issue
+  [HIGH] Second issue
+  [CRITICAL] Third issue
+
+Result: HIGH (3 findings, 2 high)
+`);
+assert(multi.findings.length === 3, 'multiple findings = 3 entries');
+assert(multi.findings.map((f) => f.severity).join(',') === 'warn,high,critical',
+  'severities preserved in order');
+assert(multi.summary?.totalCount === 3, 'multi summary totalCount === 3');
+
+// No Result: line — summary stays null but findings still parsed
+const noResult = parseMcpScanText(`  [INFO] Lone finding\n`);
+assert(noResult.findings.length === 1, 'no Result: line → still parses findings');
+assert(noResult.summary === null, 'no Result: line → summary === null');
+
+// Mixed-case severity in source — parser is intentionally strict: regex
+// captures `[A-Z]+` so mixed-case 'Warn' WON'T match. This is the
+// documented contract — upstream emits all-uppercase markers.
+const mixed = parseMcpScanText('  [Warn] Something\n  [HIGH] Other\n');
+assert(mixed.findings.length === 1,
+  'strict regex skips mixed-case [Warn], captures [HIGH] only');
+assert(mixed.findings[0].severity === 'high',
+  'strict regex captured the uppercase entry');
 
 // ──────────────────────────────────────────────────────────────────
 const summary = {
