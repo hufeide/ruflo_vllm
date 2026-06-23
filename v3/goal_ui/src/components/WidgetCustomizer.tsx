@@ -6,8 +6,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Palette, Type, Copy, Check, Sliders } from "lucide-react";
+import { Settings, Palette, Type, Copy, Check, Sliders, Wifi, WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { VLLMClient } from "@/lib/vllmService";
 
 interface WidgetConfig {
   primaryColor: string;
@@ -31,6 +32,8 @@ interface WidgetConfig {
   compactMode: boolean;
   enableAI: boolean;
   aiModel: string;
+  apiUrl?: string;  // vLLM or custom API endpoint
+  modelName?: string;  // Model name for vLLM (e.g., Qwen3Coder)
 }
 
 interface WidgetCustomizerProps {
@@ -42,9 +45,43 @@ interface WidgetCustomizerProps {
 export const WidgetCustomizer = ({ config, onConfigChange, onGenerate }: WidgetCustomizerProps) => {
   const [copied, setCopied] = useState(false);
   const [showEmbedCode, setShowEmbedCode] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [connectionMessage, setConnectionMessage] = useState('');
 
   const updateConfig = (key: keyof WidgetConfig, value: string | boolean) => {
     onConfigChange({ ...config, [key]: value });
+  };
+
+  // Test vLLM API connection
+  const testVLLMConnection = async () => {
+    if (!config.apiUrl || !config.modelName) {
+      setConnectionStatus('error');
+      setConnectionMessage('Please enter API URL and Model Name');
+      return;
+    }
+
+    setConnectionStatus('testing');
+    setConnectionMessage('Testing connection...');
+
+    try {
+      const client = new VLLMClient({
+        apiUrl: config.apiUrl,
+        modelName: config.modelName,
+      });
+
+      const result = await client.testConnection();
+
+      if (result.success) {
+        setConnectionStatus('success');
+        setConnectionMessage(result.message);
+      } else {
+        setConnectionStatus('error');
+        setConnectionMessage(result.message);
+      }
+    } catch (error) {
+      setConnectionStatus('error');
+      setConnectionMessage(error instanceof Error ? error.message : 'Connection failed');
+    }
   };
 
   const generateEmbedCode = () => {
@@ -401,13 +438,84 @@ export const WidgetCustomizer = ({ config, onConfigChange, onGenerate }: WidgetC
                       <SelectItem value="google/gemini-2.5-flash-lite">
                         Gemini 2.5 Flash Lite (Fastest)
                       </SelectItem>
+                      <SelectItem value="vllm/local">
+                        vLLM Local (Custom API)
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-[10px] text-muted-foreground/70">
                     {config.aiModel === "google/gemini-2.5-pro" && "Best for complex reasoning and accuracy"}
                     {config.aiModel === "google/gemini-2.5-flash" && "Balanced performance and speed"}
                     {config.aiModel === "google/gemini-2.5-flash-lite" && "Optimized for speed and cost"}
+                    {config.aiModel === "vllm/local" && "Connect to your vLLM server (OpenAI compatible API)"}
                   </p>
+                  {config.aiModel === "vllm/local" && (
+                    <div className="space-y-1 pt-2">
+                      <Label htmlFor="apiUrl" className="text-xs text-muted-foreground">
+                        vLLM API URL
+                      </Label>
+                      <Input
+                        id="apiUrl"
+                        placeholder="http://localhost:8000/v1"
+                        value={config.apiUrl || ""}
+                        onChange={(e) => updateConfig("apiUrl", e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                      <p className="text-[10px] text-muted-foreground/50">
+                        Example: http://localhost:8000/v1 (OpenAI compatible endpoint)
+                      </p>
+                      <Label htmlFor="modelName" className="text-xs text-muted-foreground pt-2">
+                        Model Name
+                      </Label>
+                      <Input
+                        id="modelName"
+                        placeholder="Qwen3Coder"
+                        value={config.modelName || ""}
+                        onChange={(e) => updateConfig("modelName", e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                      <p className="text-[10px] text-muted-foreground/50">
+                        Model identifier as configured in vLLM
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 mt-2 w-full"
+                        onClick={testVLLMConnection}
+                        disabled={connectionStatus === 'testing'}
+                      >
+                        {connectionStatus === 'testing' ? (
+                          <span className="flex items-center gap-1">
+                            <Wifi className="h-3 w-3 animate-pulse" />
+                            Testing...
+                          </span>
+                        ) : connectionStatus === 'success' ? (
+                          <span className="flex items-center gap-1 text-green-600">
+                            <Wifi className="h-3 w-3" />
+                            Connected
+                          </span>
+                        ) : connectionStatus === 'error' ? (
+                          <span className="flex items-center gap-1 text-red-600">
+                            <WifiOff className="h-3 w-3" />
+                            Failed
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1">
+                            <Wifi className="h-3 w-3" />
+                            Test Connection
+                          </span>
+                        )}
+                      </Button>
+                      {connectionMessage && (
+                        <p className={cn(
+                          "text-[10px] mt-1",
+                          connectionStatus === 'success' ? "text-green-600" : "text-red-600"
+                        )}>
+                          {connectionMessage}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

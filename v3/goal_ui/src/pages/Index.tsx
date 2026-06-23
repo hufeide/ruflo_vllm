@@ -39,6 +39,12 @@ import { GOAPConfigDisplay } from "@/components/GOAPConfigDisplay";
 import { GOAPPlanner, parseGoal, type Step, type DataItem } from "@/lib/goapPlanner";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  VLLMClient,
+  initVLLMClient,
+  getVLLMClient,
+  type ChatMessage,
+} from "@/lib/vllmService";
 
 interface WidgetConfig {
   primaryColor: string;
@@ -62,6 +68,8 @@ interface WidgetConfig {
   compactMode: boolean;
   enableAI: boolean;
   aiModel: string;
+  apiUrl?: string;  // vLLM or custom API endpoint
+  modelName?: string;  // Model name for vLLM (e.g., Qwen3Coder)
 }
 
 const defaultResearchConfig: ResearchConfig = {
@@ -148,7 +156,9 @@ const Index = () => {
     showStats: true,
     compactMode: false,
     enableAI: true,
-    aiModel: "google/gemini-2.5-flash",
+    aiModel: "vllm/local",
+    apiUrl: "http://192.168.1.212:16000/v1",  // Qwen3Coder vLLM API
+    modelName: "Qwen3Coder",  // Model identifier
   });
   const [showCustomizer, setShowCustomizer] = useState(false);
   const [userGoal, setUserGoal] = useState<string>("");
@@ -169,6 +179,125 @@ const Index = () => {
   const goapCardsRef = useRef<HTMLDivElement>(null);
   const objectiveRef = useRef<HTMLDivElement>(null);
   const finalAnalysisRef = useRef<HTMLDivElement>(null);
+
+  // Initialize vLLM client when config changes
+  useEffect(() => {
+    if (widgetConfig.aiModel === "vllm/local" && widgetConfig.apiUrl && widgetConfig.modelName) {
+      console.log(`🔌 Initializing vLLM client: ${widgetConfig.apiUrl} with model ${widgetConfig.modelName}`);
+      initVLLMClient({
+        apiUrl: widgetConfig.apiUrl,
+        modelName: widgetConfig.modelName,
+        maxTokens: researchConfig.parameters.maxSources * 200 || 2048,
+        temperature: 0.7,
+      });
+    }
+  }, [widgetConfig.aiModel, widgetConfig.apiUrl, widgetConfig.modelName]);
+
+  /**
+   * Unified AI call function - routes to vLLM or Supabase based on config
+   */
+  const callAI = async (
+    goal: string,
+    stepTitle: string,
+    stepDescription: string,
+    stepType: string,
+    previousStepsData: any[]
+  ): Promise<{ data: any[] | null; error: string | null }> => {
+    // Use vLLM if configured
+    if (widgetConfig.aiModel === "vllm/local") {
+      const client = getVLLMClient();
+      if (!client) {
+        return { data: null, error: "vLLM client not initialized" };
+      }
+
+      try {
+        console.log(`🤖 Calling vLLM API for step: ${stepTitle}`);
+
+        // Build context from previous steps
+        const contextParts = previousStepsData.map(step =>
+          `## ${step.stepTitle}\n${step.data.map((d: any) => `- ${d.title}: ${d.content}`).join('\n')}`
+        ).join('\n\n');
+
+        const systemPrompt = researchConfig.prompts.systemPrompt || 
+          `You are a research assistant. Provide structured research data in JSON format.
+Each response should be an array of objects with: {title, content, source, confidence (0-100), timestamp}`;
+
+        const userPrompt = `Research Goal: "${goal}"
+
+Current Step: ${stepTitle}
+Description: ${stepDescription}
+
+Previous Research Context:
+${contextParts || 'No previous context available'}
+
+Provide 3-5 research findings as JSON array: [{"title": "...", "content": "...", "source": "...", "confidence": 85, "timestamp": "..."}]`;
+
+        const response = await client.chatCompletion([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ]);
+
+        const content = response.choices[0]?.message?.content || '';
+        console.log(`📝 vLLM response: ${content.slice(0, 200)}...`);
+
+        // Parse JSON from response
+        try {
+          const jsonMatch = content.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            const data = JSON.parse(jsonMatch[0]);
+            return { data, error: null };
+          }
+        } catch (parseError) {
+          console.warn('Failed to parse vLLM response as JSON:', content);
+        }
+
+        // Fallback: create structured data from text
+        const lines = content.split('\n').filter(l => l.trim());
+        const fallbackData = lines.slice(0, 5).map((line, idx) => ({
+          title: line.slice(0, 80),
+          content: line,
+          source: 'vLLM/Qwen3Coder',
+          confidence: 70 + idx * 5,
+          timestamp: new Date().toISOString(),
+        }));
+
+        return { data: fallbackData, error: null };
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : 'Unknown vLLM error';
+        console.error('❌ vLLM API error:', errorMsg);
+        return { data: null, error: errorMsg };
+      }
+    }
+
+    // Use Supabase for other models (Gemini, etc.)
+    try {
+      const { data, error } = await supabase.functions.invoke('research-step', {
+        body: {
+          goal,
+          stepTitle,
+          stepDescription,
+          stepType,
+          aiModel: widgetConfig.aiModel,
+          config: {
+            researchGuidance: researchConfig.researchGuidance,
+            prompts: researchConfig.prompts,
+            parameters: researchConfig.parameters,
+            filters: researchConfig.filters,
+          },
+          previousStepsData,
+        },
+      });
+
+      if (error) {
+        return { data: null, error: error.message || 'Supabase function error' };
+      }
+
+      return { data: Array.isArray(data) ? data : [data], error: null };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      return { data: null, error: errorMsg };
+    }
+  };
 
   // GOAP Action definitions
   const createGOAPActions = (goal: string) => {
@@ -669,25 +798,17 @@ const Index = () => {
             })
           }));
           
-          console.log(`📤 Calling Gemini API for step ${i}`);
+          console.log(`📤 Calling AI API for step ${i} (${widgetConfig.aiModel})`);
           console.log(`   Context: ${previousStepsData.length} previous steps with ${previousStepsData.reduce((sum, s) => sum + s.data.length, 0)} total data items`);
-          
-          const { data, error } = await supabase.functions.invoke('research-step', {
-            body: {
-              goal: researchGoal || userGoal,
-              stepTitle: currentStep.title,
-              stepDescription: currentStep.description,
-              stepType: currentStep.id,
-              aiModel: widgetConfig.aiModel,
-              config: {
-                researchGuidance: researchConfig.researchGuidance,
-                prompts: researchConfig.prompts,
-                parameters: researchConfig.parameters,
-                filters: researchConfig.filters,
-              },
-              previousStepsData: previousStepsData,
-            },
-          });
+
+          // Use unified AI call function
+          const { data, error } = await callAI(
+            researchGoal || userGoal,
+            currentStep.title,
+            currentStep.description,
+            currentStep.id,
+            previousStepsData
+          );
 
           if (error) {
             console.error('❌ Error fetching research data:', error);
@@ -789,16 +910,14 @@ const Index = () => {
           })
         }));
 
-        const { data, error } = await supabase.functions.invoke('research-step', {
-          body: {
-            goal: researchGoal || userGoal,
-            stepTitle: "Final Recommendations",
-            stepDescription: `Based on all research findings, provide specific, actionable recommendations that directly answer: "${researchGoal || userGoal}". Include concrete suggestions with supporting data from the research.`,
-            stepType: "final-report",
-            aiModel: widgetConfig.aiModel,
-            previousStepsData: allResearchContext,
-          },
-        });
+        // Use unified AI call function for final recommendations
+        const { data, error } = await callAI(
+          researchGoal || userGoal,
+          "Final Recommendations",
+          `Based on all research findings, provide specific, actionable recommendations that directly answer: "${researchGoal || userGoal}". Include concrete suggestions with supporting data from the research.`,
+          "final-report",
+          allResearchContext
+        );
 
         if (!error && data && Array.isArray(data)) {
           console.log('Final report recommendations generated:', data.length, 'items');
